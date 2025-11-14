@@ -1,17 +1,15 @@
 import streamlit as st
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from googleapiclient.errors import HttpError
 from datetime import datetime, timedelta
-from google.auth.transport.requests import Request
 import pytz
-import pandas as pd
-import os
 from email.mime.text import MIMEText
 import base64
 from PIL import Image
+import os
+import smtplib
+from email.mime.text import MIMEText
 
 # ---------------- CONFIGURACIÓN GENERAL ----------------
 st.set_page_config(page_title="💈 Lucky Bvrber 🍀", page_icon="💇", layout="wide")
@@ -46,13 +44,12 @@ SERVICIOS = {
     "Ondulacion permanente": {"precio": 35000, "imagen": "images/Ondulado_Permanente.jpg"},
 }
 
-# ---------------- CONFIGURACIÓN ----------------
+# ---------------- CONFIGURACIÓN DE HORARIOS ----------------
 WORK_START, WORK_END, SLOT_MINUTES = 9, 18, 45
 TIMEZONE = "America/Santiago"
 CALENDAR_ID = "lucky.bvrber5@gmail.com"
 SHEET_ID = "1z4E18eS62VUacbIHb2whKzLYTsS5zyYnRNZTqFFiQgc"
-
-tz = pytz.timezone(TIMEZONE)   # <<< ESTA LÍNEA DEBE IR AQUÍ
+tz = pytz.timezone(TIMEZONE)
 
 # ---------------- AUTENTICACIÓN GOOGLE ----------------
 SCOPES = [
@@ -61,41 +58,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.send"
 ]
 
-# ---- AUTENTICACIÓN OAUTH2 ----
-@st.cache_resource
-def build_services():
-    creds = None
+creds = service_account.Credentials.from_service_account_info(st.secrets["google"], scopes=SCOPES)
 
-    # Si existe token.json, lo usamos
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+calendar_service = build("calendar", "v3", credentials=creds)
+sheets_service = build("sheets", "v4", credentials=creds)
+gmail_service = build("gmail", "v1", credentials=creds)
 
-    # Si no existe o expiró, pedimos login OAuth2
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # Oculta el mensaje del navegador en Streamlit
-            with st.spinner("🔐 Abriendo autorización de Google..."):
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    "credentials.json", SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-
-        # Guardamos token
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    # Construimos servicios
-    calendar = build("calendar", "v3", credentials=creds)
-    sheets = build("sheets", "v4", credentials=creds)
-    gmail = build("gmail", "v1", credentials=creds)
-
-    return calendar, sheets, gmail
-
-calendar_service, sheets_service, gmail_service = build_services()
-
-# ---------------- FUNCIONES DE GOOGLE ----------------
+# ---------------- FUNCIONES ----------------
 def get_day_events(service, fecha):
     start = tz.localize(datetime(fecha.year, fecha.month, fecha.day, 0, 0))
     end = start + timedelta(days=1)
@@ -124,7 +93,6 @@ def create_calendar_event(service, start, end, title, desc, email):
         "description": desc,
         "start": {"dateTime": start.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end.isoformat(), "timeZone": TIMEZONE},
-        "attendees": [{"email": email}],
     }
     service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
 
@@ -136,12 +104,23 @@ def append_to_sheet(service, data):
         body={"values": [data]}
     ).execute()
 
-def send_gmail_message(service, to, subject, body):
+def send_gmail_message(to, subject, body):
+    # Tu correo y la app password
+    gmail_user = "lucky.bvrber5@gmail.com"
+    app_password = "bioz ttiy vput vbkl"
+
     msg = MIMEText(body)
-    msg["to"] = to
-    msg["subject"] = subject
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    msg["From"] = gmail_user
+    msg["To"] = to
+    msg["Subject"] = subject
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(gmail_user, app_password)
+            server.sendmail(gmail_user, to, msg.as_string())
+        st.success("✅ Correo enviado correctamente.")
+    except Exception as e:
+        st.error(f"Error al enviar correo: {e}")
 
 # ---------------- INTERFAZ ----------------
 st.title("💈 Reserva tu cita con 𝓛𝓾𝓬𝓴𝔂 𝐵𝓋𝓇𝒷𝑒𝓇 🍀")
@@ -172,18 +151,20 @@ for i, (nombre_servicio, datos) in enumerate(SERVICIOS.items()):
         if img:
             st.image(img)
         st.markdown(f"**{nombre_servicio}** — 💵 ${datos['precio']}")
+
 st.markdown("""**Descripción de servicios:**
-- **Servicio clásico:** Corte de pelo a gusto, junto con un perfilado de cejas y barba + aplicación de productos para dar forma y estilizar el cabello + una bebida de cortesía al momento del servicio.
-- **Servicio premium:** Corte de pelo a gusto, junto con un perfilado de cejas y barba, además incluye limpieza, exfoliación e hidratación de la piel + aplicación de productos para dar forma y estilizar el cabello + una bebida de cortesía al momento del servicio.
-- **Servicio a domicilio:** Corte de pelo a gusto, junto con un perfilado de cejas y barba + aplicación de productos para dar forma y estilizar el cabello + una bebida de cortesía al momento del servicio, todo en la comodidad de su casa (el valor puede aumentar dependiendo de la lejanía del domicilio).
+- **Servicio clásico:** Corte de pelo a gusto, perfilado de cejas y barba, productos para estilizar el cabello + bebida de cortesía.
+- **Servicio premium:** Incluye limpieza, exfoliación e hidratación + los mismos beneficios que clásico.
+- **Servicio a domicilio:** Corte de pelo a gusto en la comodidad de su casa (valor puede variar según distancia).
 """)
+
 servicio = st.selectbox("✂️ Elige tu servicio", list(SERVICIOS.keys()))
 
-# Inicializamos la variable de sesión
+# Inicializar sesión
 if "reserva_confirmada" not in st.session_state:
     st.session_state["reserva_confirmada"] = False
 
-# Botón de confirmación
+# Botón de confirmación (solo se puede presionar una vez)
 if st.button("📆 Confirmar reserva") and not st.session_state["reserva_confirmada"]:
     if not nombre or not email or not fecha or not hora_sel:
         st.error("Por favor, completa todos los campos.")
@@ -205,13 +186,11 @@ if st.button("📆 Confirmar reserva") and not st.session_state["reserva_confirm
                     fecha.strftime("%Y-%m-%d"), start_str, nombre, email, servicio, precio
                 ])
                 send_gmail_message(
-                    gmail_service,
-                    email,
+                     email,
                     "Confirmación de cita — Lucky Barber",
                     f"Hola {nombre}, tu cita para {servicio} fue confirmada para el {fecha} a las {start_str}. 💈\nPrecio: ${precio}\n¡Te esperamos!"
                 )
                 st.success("✅ Cita confirmada y correo enviado.")
-                # Marcamos como confirmada para desactivar el botón
                 st.session_state["reserva_confirmada"] = True
             except HttpError as e:
                 st.error(f"Error en Google API: {e}")
