@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+env/
+
+# Streamlit
+.streamlit/
+
+# Google credentials
+*.json
+credentials.json
+service_account.json

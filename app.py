@@ -10,6 +10,7 @@ from PIL import Image
 import os
 import smtplib
 from email.mime.text import MIMEText
+import json, os
 
 # ---------------- CONFIGURACIÓN GENERAL ----------------
 st.set_page_config(page_title="💈 Lucky Bvrber 🍀", page_icon="💇", layout="wide")
@@ -33,15 +34,15 @@ def load_image(path, size=(400, 300)):
 
 banner = load_image("images/banner.jpg", size=(1200, 400))
 if banner:
-    st.image(banner, width="stretch")
+    st.image(banner, use_column_width=True)
 
 # ---------------- DATOS DE SERVICIOS ----------------
 SERVICIOS = {
-    "Corte Clasico": {"precio": 9000, "imagen": "images/Corte_Clasico.jpg"},
-    "Corte Premium": {"precio": 15000, "imagen": "images/Corte_Premium.jpg"},
-    "Domicilio": {"precio": 15000, "imagen": "images/Corte_Domicilio.jpg"},
-    "Tintura": {"precio": 40000, "imagen": "images/tintura.jpg"},
-    "Ondulacion permanente": {"precio": 35000, "imagen": "images/Ondulado_Permanente.jpg"},
+    "Servicio Clasico": {"desc": "Corte de pelo a gusto, perfilado de cejas y barba, productos para estilizar el cabello." , "precio": "10.000", "imagen": "images/Corte_Clasico.jpg"},
+    "Servicio Premium": {"desc": "Incluye limpieza, exfoliación e hidratación + los mismos beneficios que clásico.", "precio": "17.000", "imagen": "images/Corte_Premium.jpg"},
+    "Servicio Domicilio": {"desc": "Corte de pelo a gusto en la comodidad de su casa (valor puede variar según distancia)." , "precio": "15.000", "imagen": "images/Corte_Domicilio.jpg"},
+    "Servicio Tintura": {"desc": "Servicio clasico + Tintura deseada, coordinar por DM color y estilo deseado" , "precio": "45.000", "imagen": "images/tintura.jpg"},
+    "Servicio Ondulacion": {"desc": "Servicio clasico + Ondulacion permanente, coordinar por DM estilo deseado" , "precio": "40.000", "imagen": "images/Ondulado_Permanente.jpg"},
 }
 
 # ---------------- CONFIGURACIÓN DE HORARIOS ----------------
@@ -77,6 +78,7 @@ def get_day_events(service, fecha):
     ).execute()
     return events.get("items", [])
 
+
 def is_slot_free(start, end, events):
     for event in events:
         s = event["start"].get("dateTime")
@@ -87,6 +89,7 @@ def is_slot_free(start, end, events):
                 return False
     return True
 
+
 def create_calendar_event(service, start, end, title, desc, email):
     event = {
         "summary": title,
@@ -94,7 +97,9 @@ def create_calendar_event(service, start, end, title, desc, email):
         "start": {"dateTime": start.isoformat(), "timeZone": TIMEZONE},
         "end": {"dateTime": end.isoformat(), "timeZone": TIMEZONE},
     }
-    service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    created = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    return created["id"]
+
 
 def append_to_sheet(service, data):
     service.spreadsheets().values().append(
@@ -104,8 +109,8 @@ def append_to_sheet(service, data):
         body={"values": [data]}
     ).execute()
 
+
 def send_gmail_message(to, subject, body):
-    # Tu correo y la app password
     gmail_user = "lucky.bvrber5@gmail.com"
     app_password = "bioz ttiy vput vbkl"
 
@@ -122,75 +127,193 @@ def send_gmail_message(to, subject, body):
     except Exception as e:
         st.error(f"Error al enviar correo: {e}")
 
-# ---------------- INTERFAZ ----------------
-st.title("💈 Reserva tu cita con 𝓛𝓾𝓬𝓴𝔂 𝐵𝓋𝓇𝒷𝑒𝓇 🍀")
 
-nombre = st.text_input("👤 Nombre completo")
-email = st.text_input("📧 Correo electrónico")
-fecha = st.date_input("📅 Fecha de la cita")
+# ---------------- MENÚ LATERAL ----------------
+menu = st.sidebar.radio("Menú", ["Reservar", "Cancelar cita"])
 
-if fecha:
-    events = get_day_events(calendar_service, fecha)
-    slots = []
-    hora = WORK_START
-    while hora + (SLOT_MINUTES / 60) <= WORK_END:
-        start = tz.localize(datetime(fecha.year, fecha.month, fecha.day, int(hora)))
-        end = start + timedelta(minutes=SLOT_MINUTES)
-        if is_slot_free(start, end, events):
-            slots.append(f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}")
-        hora += SLOT_MINUTES / 60
-    hora_sel = st.selectbox("🕒 Horas disponibles", slots) if slots else st.warning("Sin horarios libres.")
-else:
-    hora_sel = None
 
-st.subheader("💇‍♂️ Servicios disponibles")
-cols = st.columns(len(SERVICIOS))
-for i, (nombre_servicio, datos) in enumerate(SERVICIOS.items()):
-    with cols[i]:
-        img = load_image(datos["imagen"])
-        if img:
-            st.image(img)
-        st.markdown(f"**{nombre_servicio}** — 💵 ${datos['precio']}")
+# =======================================================
+# ===================== RESERVAR =========================
+# =======================================================
+if menu == "Reservar":
 
-st.markdown("""**Descripción de servicios:**
-- **Servicio clásico:** Corte de pelo a gusto, perfilado de cejas y barba, productos para estilizar el cabello + bebida de cortesía.
-- **Servicio premium:** Incluye limpieza, exfoliación e hidratación + los mismos beneficios que clásico.
-- **Servicio a domicilio:** Corte de pelo a gusto en la comodidad de su casa (valor puede variar según distancia).
-""")
+    st.title("💈 Reserva tu cita con 𝓛𝓾𝓬𝓴𝔂 𝐵𝓋𝓇𝒷𝑒𝓇 🍀")
 
-servicio = st.selectbox("✂️ Elige tu servicio", list(SERVICIOS.keys()))
+    nombre = st.text_input("👤 Nombre completo")
+    email = st.text_input("📧 Correo electrónico")
+    fecha = st.date_input("📅 Fecha de la cita")
 
-# Inicializar sesión
-if "reserva_confirmada" not in st.session_state:
-    st.session_state["reserva_confirmada"] = False
-
-# Botón de confirmación (solo se puede presionar una vez)
-if st.button("📆 Confirmar reserva") and not st.session_state["reserva_confirmada"]:
-    if not nombre or not email or not fecha or not hora_sel:
-        st.error("Por favor, completa todos los campos.")
+    if fecha:
+        events = get_day_events(calendar_service, fecha)
+        slots = []
+        hora = WORK_START
+        while hora + (SLOT_MINUTES / 60) <= WORK_END:
+            start = tz.localize(datetime(fecha.year, fecha.month, fecha.day, int(hora)))
+            end = start + timedelta(minutes=SLOT_MINUTES)
+            if is_slot_free(start, end, events):
+                slots.append(f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}")
+            hora += SLOT_MINUTES / 60
+        hora_sel = st.selectbox("🕒 Horas disponibles", slots) if slots else st.warning("Sin horarios libres.")
     else:
-        start_str, end_str = hora_sel.split(" - ")
-        start_dt = tz.localize(datetime.combine(fecha, datetime.strptime(start_str, "%H:%M").time()))
-        end_dt = tz.localize(datetime.combine(fecha, datetime.strptime(end_str, "%H:%M").time()))
-        precio = SERVICIOS[servicio]["precio"]
+        hora_sel = None
 
-        if not is_slot_free(start_dt, end_dt, events):
-            st.error("⛔ Ese horario ya está ocupado.")
+    st.subheader("💇‍♂️ Servicios disponibles")
+    cols = st.columns(len(SERVICIOS))
+    for i, (nombre_servicio, datos) in enumerate(SERVICIOS.items()):
+        with cols[i]:
+            img = load_image(datos["imagen"])
+            if img:
+                st.image(img)
+            st.markdown(f"**{nombre_servicio}** — {datos['desc']} — 💵 ${datos['precio']}")
+
+
+    servicio = st.selectbox("✂️ Elige tu servicio", list(SERVICIOS.keys()))
+
+    if "reserva_confirmada" not in st.session_state:
+        st.session_state["reserva_confirmada"] = False
+
+    if st.button("📆 Confirmar reserva") and not st.session_state["reserva_confirmada"]:
+        if not nombre or not email or not fecha or not hora_sel:
+            st.error("Por favor, completa todos los campos.")
         else:
-            try:
-                title = f"{servicio} — {nombre}"
-                desc = f"Cliente: {nombre}\nEmail: {email}\nServicio: {servicio}\nPrecio: ${precio}"
+            start_str, end_str = hora_sel.split(" - ")
+            start_dt = tz.localize(datetime.combine(fecha, datetime.strptime(start_str, "%H:%M").time()))
+            end_dt = tz.localize(datetime.combine(fecha, datetime.strptime(end_str, "%H:%M").time()))
+            precio = SERVICIOS[servicio]["precio"]
 
-                create_calendar_event(calendar_service, start_dt, end_dt, title, desc, email)
-                append_to_sheet(sheets_service, [
-                    fecha.strftime("%Y-%m-%d"), start_str, nombre, email, servicio, precio
-                ])
-                send_gmail_message(
-                     email,
-                    "Confirmación de cita — Lucky Barber",
-                    f"Hola {nombre}, tu cita para {servicio} fue confirmada para el {fecha} a las {start_str}. 💈\nPrecio: ${precio}\n¡Te esperamos!"
+            if not is_slot_free(start_dt, end_dt, events):
+                st.error("⛔ Ese horario ya está ocupado.")
+            else:
+                try:
+                    title = f"{servicio} — {nombre}"
+                    desc = f"Cliente: {nombre}\nEmail: {email}\nServicio: {servicio}\nPrecio: ${precio}"
+
+                    event_id = create_calendar_event(calendar_service, start_dt, end_dt, title, desc, email)
+
+                    append_to_sheet(sheets_service, [
+                        fecha.strftime("%Y-%m-%d"),
+                        start_str,
+                        nombre,
+                        email,
+                        servicio,
+                        precio,
+                        event_id,
+                        "ACTIVA",   # ← NUEVO ESTADO
+                        "",         # fecha_cancelación
+                        ""          # motivo
+                    ])
+
+                    send_gmail_message(
+                         email,
+                        "Confirmación de cita — Lucky Barber",
+                        f"Hola {nombre}, tu cita para {servicio} fue confirmada para el {fecha} a las {start_str}. 💈\nPrecio: ${precio}\n¡Te esperamos!"
+                    )
+                    st.success("✅ Cita confirmada y correo enviado.")
+                    st.session_state["reserva_confirmada"] = True
+
+                except HttpError as e:
+                    st.error(f"Error en Google API: {e}")
+
+
+# =======================================================
+# ================= CANCELAR CITA ========================
+# =======================================================
+if menu == "Cancelar cita":
+
+    st.title("❌ Cancelar cita")
+
+    # Entrada para buscar por correo
+    email_cancel = st.text_input("📧 Ingresa el correo con el que reservaste")
+
+    # Buscar citas
+    if st.button("Buscar mis citas"):
+        sheet = sheets_service.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID,
+            range="A:J"
+        ).execute()
+
+        rows = sheet.get("values", [])[1:]  # sin encabezado
+
+        citas = [r for r in rows if len(r) > 6 and r[3] == email_cancel]
+
+        # Guardamos la info en session_state para NO perderla al recargar
+        st.session_state["citas_encontradas"] = citas
+        st.session_state["sheet_rows"] = rows
+
+    # Si ya existen citas cargadas, mostrarlas
+    if "citas_encontradas" in st.session_state:
+
+        citas = st.session_state["citas_encontradas"]
+        rows = st.session_state["sheet_rows"]
+
+        if not citas:
+            st.error("No se encontraron citas asociadas a ese correo.")
+            st.stop()
+
+        st.success("Citas encontradas:")
+
+        # Crear almacenamiento para motivos
+        if "motivos" not in st.session_state:
+            st.session_state["motivos"] = {}
+
+        for idx, c in enumerate(citas):
+            fecha, hora, nombre, correo, servicio, precio, event_id = c[:7]
+            key_cita = f"{event_id}_{idx}"
+
+            with st.container():
+                st.write(f"📅 **{fecha}** — 🕒 **{hora}** — ✂️ {servicio} — 💵 ${precio}")
+
+                # input del motivo (persistente)
+                st.session_state["motivos"][key_cita] = st.text_input(
+                    f"Motivo de cancelación ({fecha} {hora}):",
+                    value=st.session_state["motivos"].get(key_cita, ""),
+                    key=f"motivo_input_{key_cita}"
                 )
-                st.success("✅ Cita confirmada y correo enviado.")
-                st.session_state["reserva_confirmada"] = True
-            except HttpError as e:
-                st.error(f"Error en Google API: {e}")
+
+                # botón cancelar
+                if st.button(f"Cancelar cita del {fecha} {hora}", key=f"btn_cancelar_{key_cita}"):
+
+                    motivo = st.session_state["motivos"].get(key_cita, "")
+
+                    if not motivo.strip():
+                        st.error("⚠️ Debes ingresar un motivo para cancelar.")
+                        st.stop()
+
+                    try:
+                        # 1. Borrar del calendar
+                        calendar_service.events().delete(
+                        calendarId=CALENDAR_ID,
+                        eventId=event_id
+                        ).execute()
+
+                    except HttpError as e:
+                        status = getattr(e.resp, "status", None)
+
+                        if status == 410 or "Resource has been deleted" in str(e):
+                            # Evento ya eliminado → continuar
+                            pass
+                        else:
+                            st.error(f"Error al cancelar: {e}")
+                            st.stop()
+
+                    # 2. Buscar fila en Google Sheets
+                    fila_real = rows.index(c) + 2
+
+                    # 3. Actualizar estado y motivo
+                    sheets_service.spreadsheets().values().update(
+                        spreadsheetId=SHEET_ID,
+                        range=f"H{fila_real}:J{fila_real}",
+                        valueInputOption="RAW",
+                        body={
+                            "values": [[
+                                "CANCELADA",
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                motivo
+                            ]]
+                        }
+                    ).execute()
+
+                    st.success("❌ Cita cancelada correctamente.")
+
+                    # Limpiar estado para evitar doble cancelación
+                    del st.session_state["citas_encontradas"]
